@@ -17,8 +17,14 @@ func TestBackendClientValidatesLicenseAndCreatesSession(t *testing.T) {
 		if request.URL.Path != backendLicensePath {
 			t.Fatalf("path = %q, want %q", request.URL.Path, backendLicensePath)
 		}
-		if request.Header.Get("Authorization") != "" {
-			t.Fatal("license validation must not send a stale bearer token")
+		if request.Header.Get("Authorization") != "Bearer backend-service-token" {
+			t.Fatalf(
+				"authorization = %q, want MCP backend service bearer",
+				request.Header.Get("Authorization"),
+			)
+		}
+		if request.Header.Get(APIKeyHeader) != "sk_mcp_live_secret" {
+			t.Fatalf("X-API-Key = %q, want customer API key", request.Header.Get(APIKeyHeader))
 		}
 		if err := json.NewDecoder(request.Body).Decode(&gotRequest); err != nil {
 			t.Fatalf("decode request: %v", err)
@@ -92,6 +98,22 @@ func TestBackendClientMapsDeniedLicense(t *testing.T) {
 	}
 }
 
+func TestBackendClientTreatsLicenseUnauthorizedAsServiceFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	client := newTestBackendClient(t, server.URL)
+
+	_, err := client.AuthorizeAPIKey(context.Background(), "sk_mcp_live_secret")
+	if err == nil {
+		t.Fatal("expected service authentication error")
+	}
+	if errors.Is(err, ErrInvalidAPIKey) {
+		t.Fatalf("error = %v, must not blame the customer API key", err)
+	}
+}
+
 func TestBackendClientExecutesPlanWithSessionToken(t *testing.T) {
 	var gotAuth string
 	var gotRequest backendPlanRequest
@@ -133,20 +155,53 @@ func TestBackendClientExecutesPlanWithSessionToken(t *testing.T) {
 
 func TestBackendClientRejectsInsecureRemoteURL(t *testing.T) {
 	_, err := NewBackendClient(BackendClientConfig{
-		BaseURL:   "http://api.architectmcp.com",
-		MachineID: "machine",
+		BaseURL:      "http://api.architectmcp.com",
+		MachineID:    "machine",
+		ServiceToken: "backend-service-token",
 	})
 	if err == nil {
 		t.Fatal("expected non-loopback HTTP URL to be rejected")
 	}
 }
 
+func TestBackendClientRequiresServiceTokenForRemoteBackend(t *testing.T) {
+	_, err := NewBackendClient(BackendClientConfig{
+		BaseURL:   "https://api.architectmcp.com",
+		MachineID: "machine",
+	})
+	if err == nil {
+		t.Fatal("expected remote backend without service token to be rejected")
+	}
+}
+
+func TestBackendClientAllowsLoopbackWithoutServiceToken(t *testing.T) {
+	_, err := NewBackendClient(BackendClientConfig{
+		BaseURL:   "http://localhost:3002",
+		MachineID: "machine",
+	})
+	if err != nil {
+		t.Fatalf("NewBackendClient: %v", err)
+	}
+}
+
+func TestBackendClientRejectsServiceTokenWhitespace(t *testing.T) {
+	_, err := NewBackendClient(BackendClientConfig{
+		BaseURL:      "https://api.architectmcp.com",
+		MachineID:    "machine",
+		ServiceToken: "invalid token",
+	})
+	if err == nil {
+		t.Fatal("expected service token with whitespace to be rejected")
+	}
+}
+
 func newTestBackendClient(t *testing.T, baseURL string) *BackendClient {
 	t.Helper()
 	client, err := NewBackendClient(BackendClientConfig{
-		BaseURL:    baseURL,
-		MachineID:  "sha256:test-machine",
-		HTTPClient: http.DefaultClient,
+		BaseURL:      baseURL,
+		MachineID:    "sha256:test-machine",
+		ServiceToken: "backend-service-token",
+		HTTPClient:   http.DefaultClient,
 	})
 	if err != nil {
 		t.Fatalf("NewBackendClient: %v", err)

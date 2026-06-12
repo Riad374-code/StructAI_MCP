@@ -35,8 +35,12 @@ Backend must provide:
 
 ## Configuration
 
+Copy `.env.example` into your deployment platform's secret/configuration
+settings. Do not commit the real bearer token.
+
 ```powershell
 $env:ARCHITECTMCP_BACKEND_URL = "https://api.architectmcp.com"
+$env:ARCHITECTMCP_BACKEND_BEARER_TOKEN = "<deployment-secret>"
 $env:ARCHITECTMCP_MACHINE_ID = "sha256:<stable-machine-id>"
 $env:ARCHITECTMCP_ADDR = ":8080"
 go run ./cmd/architectmcp
@@ -48,8 +52,27 @@ Local development may use:
 $env:ARCHITECTMCP_BACKEND_URL = "http://localhost:3002"
 ```
 
-Production backend URLs must use HTTPS. Plain HTTP is accepted only for
-loopback development.
+`ARCHITECTMCP_BACKEND_URL` has no default. Startup fails if it is missing, so a
+production deployment cannot silently send requests to localhost. Production
+backend URLs must use HTTPS; plain HTTP is accepted only for loopback
+development.
+
+`ARCHITECTMCP_BACKEND_BEARER_TOKEN` is required for every non-loopback backend.
+MCP sends it as `Authorization: Bearer <token>` only to
+`POST /v1/license/validate`. The customer key is sent separately as
+`X-API-Key`. After validation, backend returns a scoped session JWT, and MCP
+uses that JWT as the Bearer credential for tool calls.
+
+There are two independent URLs:
+
+- The public MCP URL, such as `https://mcp.architectmcp.com/mcp/sse`, belongs
+  in the user's agent configuration.
+- The private product backend base URL, such as
+  `https://api.architectmcp.com`, belongs only in the MCP deployment
+  environment.
+
+Do not put the backend URL or backend bearer token in the user-facing
+onboarding prompt.
 
 ## Agent Host Configuration
 

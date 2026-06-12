@@ -41,13 +41,15 @@ go test ./...
 
 ```powershell
 $env:ARCHITECTMCP_BACKEND_URL = "http://localhost:3002"
+$env:ARCHITECTMCP_BACKEND_BEARER_TOKEN = "local-development-only"
 $env:ARCHITECTMCP_MACHINE_ID = "sha256:dev"
 $env:ARCHITECTMCP_ADDR = ":8080"
 go run ./cmd/architectmcp
 ```
 
-The environment variable reference in `cmd/architectmcp/main.go` describes each
-flag.
+The service bearer is optional for loopback backends, but setting it locally
+lets contributors test the production authentication flow. Never commit a real
+token; use `.env.example` only as a deployment template.
 
 ## Making Changes
 

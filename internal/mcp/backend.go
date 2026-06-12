@@ -30,17 +30,19 @@ const (
 
 // BackendClientConfig configures the product backend integration.
 type BackendClientConfig struct {
-	BaseURL    string
-	MachineID  string
-	HTTPClient *http.Client
+	BaseURL      string
+	MachineID    string
+	ServiceToken string
+	HTTPClient   *http.Client
 }
 
 // BackendClient validates API keys and proxies tool calls to backend-owned
 // business logic. It never logs raw API keys or backend session tokens.
 type BackendClient struct {
-	baseURL    string
-	machineID  string
-	httpClient *http.Client
+	baseURL      string
+	machineID    string
+	serviceToken string
+	httpClient   *http.Client
 }
 
 type backendLicenseRequest struct {
@@ -100,14 +102,19 @@ func NewBackendClient(config BackendClientConfig) (*BackendClient, error) {
 	if machineID == "" {
 		return nil, fmt.Errorf("backend machine ID is required")
 	}
+	serviceToken, err := validateServiceToken(config.ServiceToken, baseURL)
+	if err != nil {
+		return nil, err
+	}
 	httpClient := config.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: backendRequestTimeout}
 	}
 	return &BackendClient{
-		baseURL:    baseURL,
-		machineID:  machineID,
-		httpClient: httpClient,
+		baseURL:      baseURL,
+		machineID:    machineID,
+		serviceToken: serviceToken,
+		httpClient:   httpClient,
 	}, nil
 }
 
@@ -117,7 +124,7 @@ func (c *BackendClient) AuthorizeAPIKey(
 	key string,
 ) (session.Principal, error) {
 	var response backendLicenseResponse
-	err := c.postJSON(ctx, backendLicensePath, "", key, backendLicenseRequest{
+	err := c.postJSON(ctx, backendLicensePath, c.serviceToken, key, backendLicenseRequest{
 		APIKey:    key,
 		MachineID: c.machineID,
 		Version:   backendVersionPrefix + serverVersion,
@@ -237,6 +244,24 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+func validateServiceToken(raw string, baseURL string) (string, error) {
+	token := strings.TrimSpace(raw)
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse validated backend base URL: %w", err)
+	}
+	if token == "" {
+		if isLoopbackHost(parsed.Hostname()) {
+			return "", nil
+		}
+		return "", fmt.Errorf("backend service bearer token is required for remote backend")
+	}
+	if strings.ContainsAny(token, " \t\r\n") {
+		return "", fmt.Errorf("backend service bearer token contains unsupported characters")
+	}
+	return token, nil
+}
+
 func (c *BackendClient) postJSON(
 	ctx context.Context,
 	path string,
@@ -275,7 +300,7 @@ func (c *BackendClient) postJSON(
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxBackendResponseBytes))
-		return backendStatusError(response.StatusCode)
+		return backendStatusError(path, response.StatusCode)
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxBackendResponseBytes))
@@ -295,9 +320,12 @@ func (c *BackendClient) postJSON(
 	return nil
 }
 
-func backendStatusError(status int) error {
+func backendStatusError(path string, status int) error {
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
+		if path == backendLicensePath {
+			return fmt.Errorf("backend rejected MCP service authentication")
+		}
 		return ErrInvalidAPIKey
 	case http.StatusPaymentRequired:
 		return ErrInsufficientBalance
