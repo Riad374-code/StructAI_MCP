@@ -33,8 +33,6 @@ Backend must provide:
 - `POST /v1/mcp/tools/architect-plan`
 - `POST /v1/mcp/tools/architect-check`
 
-See the root `backend_side.md` for the full backend contract.
-
 ## Configuration
 
 ```powershell
